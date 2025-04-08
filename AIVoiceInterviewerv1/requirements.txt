@@ -1,0 +1,7 @@
+fastapi==0.115.0
+uvicorn==0.30.6
+websockets==12.0
+openai==1.51.0
+python-dotenv==1.0.1
+twilio==9.3.3
+supabase==1.0.3

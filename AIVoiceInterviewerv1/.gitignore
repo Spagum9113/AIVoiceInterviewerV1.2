@@ -1,0 +1,30 @@
+# Environment files (secrets and configs)
+.env
+
+# Python stuff
+__pycache__/          # Compiled Python files (no need to track these)
+*.pyc                 # More compiled files
+*.pyo                 # Optimized Python files
+*.pyd                 # Python dynamic modules
+.Python               # Python env marker
+env/                  # Your virtual environment folder
+venv/                 # Another common venv name
+*.egg-info/           # Package metadata
+dist/                 # Distribution/build folders
+build/                # Build output
+
+# Logs and temp files
+*.log                 # Log files (like uvicorn logs)
+*.tmp                 # Temporary files
+
+# IDE and editor stuff
+.vscode/              # VS Code settings
+.idea/                # PyCharm/IntelliJ settings
+*.swp                 # Vim swap files
+
+# OS junk
+.DS_Store             # macOS Finder garbage
+Thumbs.db             # Windows thumbnail cache
+
+# Project-specific (optional)
+*.wav                 # If you’re testing with audio files locally

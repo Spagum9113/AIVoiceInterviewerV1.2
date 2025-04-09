@@ -1,3 +1,6 @@
+from supabase import create_client, Client
+import uuid  # for generating a new call_logs.id if needed
+from datetime import datetime
 import os
 import json
 import base64
@@ -7,6 +10,8 @@ from fastapi import FastAPI, WebSocket, Request
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.websockets import WebSocketDisconnect
 from twilio.twiml.voice_response import VoiceResponse, Connect
+from twilio.rest import Client
+
 from dotenv import load_dotenv
 
 # Debug imports
@@ -33,6 +38,19 @@ SYSTEM_MESSAGE = (
     "Remember to speak slowly and clearly—I’m here to make this a comfortable and engaging conversation. Let’s get started!"
 )
 VOICE = 'coral'
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
+client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+
+
+# Retrieve Supabase URL and Key from your environment
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+# Create the Supabase client instance
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
 
 # Initialize FastAPI application instance
 app = FastAPI()
@@ -52,9 +70,62 @@ async def handle_incoming_call(request: Request):
     response = VoiceResponse()
     host = request.url.hostname
     connect = Connect()
-    connect.stream(url=f"{NGROK_URL}/media-stream")
+    connect.stream(url=f"{NGROK_URL.replace('https', 'wss')}/media-stream")
     response.append(connect)
     return HTMLResponse(content=str(response), media_type="application/xml")
+
+
+# Handles the outbound call
+
+@app.post("/make-call")
+async def make_outbound_call():
+    try:
+        # ✅ Step 1: Retrieve the latest candidate record from Supabase.
+        # This query selects the candidate's id and phone number,
+        # ordering by creation date (latest first) and returning just one record.
+        response = supabase.table("candidates")\
+            .select("id, phone_number")\
+            .order("created_at", desc=True)\
+            .limit(1)\
+            .execute()
+
+        # Check if a candidate record was found.
+        candidate = response.data[0] if response.data else None
+        if not candidate:
+            return JSONResponse({"error": "No candidates found in Supabase"}, status_code=404)
+
+        # Extract the candidate's id and phone number.
+        candidate_id = candidate["id"]
+        phone_number = candidate["phone_number"]
+
+        # ✅ Step 2: Use Twilio to initiate an outbound call to the candidate's phone number.
+        call = client.calls.create(
+            to=phone_number,
+            from_=TWILIO_PHONE_NUMBER,
+            # Twilio calls this URL to get TwiML instructions
+            url=f"{NGROK_URL}/incoming-call"
+        )
+
+        # ✅ Step 3: Log the call in the call_logs table in Supabase.
+        supabase.table("call_logs").insert({
+            # Unique ID for this call log entry
+            "id": str(uuid.uuid4()),
+            "candidate_id": candidate_id,
+            "status": "initiated",
+            "started_at": datetime.utcnow().isoformat()
+        }).execute()
+
+        # ✅ Step 4: Return a JSON response confirming the call and showing key details.
+        return JSONResponse({
+            "status": "calling",
+            "candidate_id": candidate_id,  # Same candidate ID used in the call log
+            # The unique identifier (SID) from Twilio for the call
+            "call_sid": call.sid
+        })
+
+    except Exception as e:
+        # ❌ If any errors occur, catch them and return a clean error message.
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @app.websocket("/media-stream")

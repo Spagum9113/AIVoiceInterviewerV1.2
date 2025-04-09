@@ -25,17 +25,17 @@ load_dotenv()
 
 # Set up constants
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-NGROK_URL = os.getenv('NGROK_URL')
+PUBLIC_SERVER_URL = os.getenv('PUBLIC_SERVER_URL')
 PORT = int(os.getenv('PORT', 8080))
 SYSTEM_MESSAGE = (
-    "Hey Ethan, I’m your AI interviewer—great to connect with you! "
-    "Before we dive into internship details, how’s your day been so far? Feel free to take a moment to gather your thoughts. "
-    "Here’s our plan: "
+    "Hey Ethan, I'm your AI interviewer—great to connect with you! "
+    "Before we dive into internship details, how's your day been so far? Feel free to take a moment to gather your thoughts. "
+    "Here's our plan: "
     "First, tell me your story—what inspired you to pursue this field and get into this role? "
     "Next, share the skills and experiences you bring to our team. Take your time. "
-    "Finally, let’s talk about what excites you most about this internship opportunity. "
-    "I’ll follow up on your answers, ensuring we stay focused on the internship. If you stray off-topic, I’ll prompt you with, ‘Nice, how does that relate to the internship?’ "
-    "Remember to speak slowly and clearly—I’m here to make this a comfortable and engaging conversation. Let’s get started!"
+    "Finally, let's talk about what excites you most about this internship opportunity. "
+    "I'll follow up on your answers, ensuring we stay focused on the internship. If you stray off-topic, I'll prompt you with, 'Nice, how does that relate to the internship?' "
+    "Remember to speak slowly and clearly—I'm here to make this a comfortable and engaging conversation. Let's get started!"
 )
 VOICE = 'coral'
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
@@ -58,19 +58,22 @@ app = FastAPI()
 # Check for OpenAI API key
 if not OPENAI_API_KEY:
     raise ValueError('MISSING OPENAI API KEY!')
+if not PUBLIC_SERVER_URL:
+    raise ValueError('MISSING PUBLIC_SERVER_URL environment variable!')
 
 
 @app.get("/", response_class=JSONResponse)
 async def index_page():
-    return {"message": "Twilio is working!"}
+    return {"message": "Twilio AI Interviewer is working!"}
 
 
 @app.api_route("/incoming-call", methods=["GET", "POST"])
 async def handle_incoming_call(request: Request):
     response = VoiceResponse()
-    host = request.url.hostname
+    websocket_url = f"{PUBLIC_SERVER_URL.replace('https', 'wss')}/media-stream"
+    print(f"Connecting Twilio Stream to: {websocket_url}")
     connect = Connect()
-    connect.stream(url=f"{NGROK_URL.replace('https', 'wss')}/media-stream")
+    connect.stream(url=websocket_url)
     response.append(connect)
     return HTMLResponse(content=str(response), media_type="application/xml")
 
@@ -99,11 +102,12 @@ async def make_outbound_call():
         phone_number = candidate["phone_number"]
 
         # ✅ Step 2: Use Twilio to initiate an outbound call to the candidate's phone number.
+        twilio_callback_url = f"{PUBLIC_SERVER_URL}/incoming-call"
+        print(f"Setting Twilio callback URL to: {twilio_callback_url}")
         call = client.calls.create(
             to=phone_number,
             from_=TWILIO_PHONE_NUMBER,
-            # Twilio calls this URL to get TwiML instructions
-            url=f"{NGROK_URL}/incoming-call"
+            url=twilio_callback_url
         )
 
         # ✅ Step 3: Log the call in the call_logs table in Supabase.

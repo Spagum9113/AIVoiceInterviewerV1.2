@@ -2,6 +2,7 @@
 .env
 
 # Python stuff
+__pycache__
 __pycache__/          # Compiled Python files (no need to track these)
 *.pyc                 # More compiled files
 *.pyo                 # Optimized Python files

@@ -9,8 +9,10 @@ import websockets
 from fastapi import FastAPI, WebSocket, Request
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.websockets import WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from twilio.twiml.voice_response import VoiceResponse, Connect
 from twilio.rest import Client
+from pydantic import BaseModel, Field # Import Pydantic
 
 from dotenv import load_dotenv
 
@@ -55,12 +57,27 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 # Initialize FastAPI application instance
 app = FastAPI()
 
+# Add CORS middleware
+# TODO: Restrict origins for production
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"], # Allows all methods
+    allow_headers=["*"], # Allows all headers
+)
+
 # Check for OpenAI API key
 if not OPENAI_API_KEY:
     raise ValueError('MISSING OPENAI API KEY!')
 if not PUBLIC_SERVER_URL:
     raise ValueError('MISSING PUBLIC_SERVER_URL environment variable!')
 
+# --- Pydantic Models ---
+class MakeCallRequest(BaseModel):
+    candidate_id: uuid.UUID = Field(..., description="The UUID of the candidate to call")
+
+# --- API Endpoints ---
 
 @app.get("/", response_class=JSONResponse)
 async def index_page():
@@ -78,28 +95,30 @@ async def handle_incoming_call(request: Request):
     return HTMLResponse(content=str(response), media_type="application/xml")
 
 
-# Handles the outbound call
-
+# Handles the outbound call based on candidate_id
 @app.post("/make-call")
-async def make_outbound_call():
+async def make_outbound_call(call_request: MakeCallRequest): # Accept request body
+    candidate_id = call_request.candidate_id
+    print(f"Attempting to make call to candidate_id: {candidate_id}")
     try:
-        # ✅ Step 1: Retrieve the latest candidate record from Supabase.
-        # This query selects the candidate's id and phone number,
-        # ordering by creation date (latest first) and returning just one record.
+        # ✅ Step 1: Retrieve the specified candidate record from Supabase.
         response = supabase.table("candidates")\
             .select("id, phone_number")\
-            .order("created_at", desc=True)\
+            .eq("id", str(candidate_id))\
             .limit(1)\
             .execute()
 
         # Check if a candidate record was found.
         candidate = response.data[0] if response.data else None
         if not candidate:
-            return JSONResponse({"error": "No candidates found in Supabase"}, status_code=404)
+            print(f"Candidate with ID {candidate_id} not found in Supabase.")
+            return JSONResponse({"error": f"Candidate with ID {candidate_id} not found"}, status_code=404)
 
-        # Extract the candidate's id and phone number.
-        candidate_id = candidate["id"]
+        # Extract the candidate's phone number (ID is already known)
         phone_number = candidate["phone_number"]
+        if not phone_number:
+            print(f"Candidate {candidate_id} found but has no phone number.")
+            return JSONResponse({"error": f"Candidate {candidate_id} has no phone number"}, status_code=400)
 
         # ✅ Step 2: Use Twilio to initiate an outbound call to the candidate's phone number.
         twilio_callback_url = f"{PUBLIC_SERVER_URL}/incoming-call"
@@ -111,23 +130,23 @@ async def make_outbound_call():
         )
 
         # ✅ Step 3: Log the call in the call_logs table in Supabase.
+        # Use the provided candidate_id
         supabase.table("call_logs").insert({
-            # Unique ID for this call log entry
             "id": str(uuid.uuid4()),
-            "candidate_id": candidate_id,
+            "candidate_id": str(candidate_id), # Use the provided ID
             "status": "initiated",
-            "started_at": datetime.utcnow().isoformat()
+            "started_at": datetime.now().isoformat() # Keep user change
         }).execute()
 
         # ✅ Step 4: Return a JSON response confirming the call and showing key details.
         return JSONResponse({
             "status": "calling",
-            "candidate_id": candidate_id,  # Same candidate ID used in the call log
-            # The unique identifier (SID) from Twilio for the call
+            "candidate_id": str(candidate_id), # Return the ID that was called
             "call_sid": call.sid
         })
 
     except Exception as e:
+        print(f"Error during make_outbound_call for candidate {candidate_id}: {e}")
         # ❌ If any errors occur, catch them and return a clean error message.
         return JSONResponse({"error": str(e)}, status_code=500)
 
